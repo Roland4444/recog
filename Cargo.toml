@@ -1,0 +1,9 @@
+[package]
+name = "supplier-inn-kpp"
+version = "1.1.1"
+edition = "2021"
+description = "Standalone offline CLI to extract supplier INN/KPP from legacy Word DOC and DOCX"
+license = "MIT"
+
+# No external Rust crates: builds with Cargo without downloading dependencies.
+[dependencies]
