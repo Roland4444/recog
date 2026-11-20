@@ -1,1 +1,1 @@
-C:\Users\user\Documents\rust\recog\new\supplier-inn-kpp-cli-1.1.1-belan-regression\target\release\libsupplier_inn_kpp.rlib: C:\Users\user\Documents\rust\recog\new\supplier-inn-kpp-cli-1.1.1-belan-regression\src\lib.rs
+C:\Users\user\Documents\rust\recog\target\release\libsupplier_inn_kpp.rlib: C:\Users\user\Documents\rust\recog\src\lib.rs C:\Users\user\Documents\rust\recog\src\metadata.rs

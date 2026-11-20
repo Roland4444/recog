@@ -5,55 +5,260 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use supplier_inn_kpp::{list_files,process_file,to_json_line,Detection};
 
 fn help(){
-    println!("supplier-inn-kpp — извлечение ИНН/КПП поставщика из DOC/DOCX");
+    println!("supplier-inn-kpp — извлечение реквизитов обеих сторон из DOC/DOCX");
     println!("Использование: supplier-inn-kpp <файл.doc | папка> [--json] [--strict]");
     println!("   --json    вывод JSON Lines (по одному объекту на каждый документ)");
     println!("   --strict  код возврата 1, если хотя бы один файл не распознан");
     println!("Требуется установленный LibreOffice Writer; исходные DOC не меняются.");
 }
-fn run()->ExitCode {
-    let mut input:Option<String>=None;
-    let mut json=false;
-    let mut strict=false;
+
+fn display(v: Option<&str>) -> &str {
+    v.unwrap_or("не найдено")
+}
+
+
+
+fn run() -> ExitCode {
+    // Исправление проблемы с lifetime
+    fn display(v: Option<&str>) -> &str {
+        v.unwrap_or("не найдено")
+    }
+
+    let mut input: Option<String> = None;
+    let mut json = false;
+    let mut strict = false;
+
+    // Обработка параметров командной строки
     for arg in env::args().skip(1) {
         match arg.as_str() {
-            "--help"|"-h"=>{help();return ExitCode::SUCCESS},
-            "--json"=>json=true,
-            "--strict"=>strict=true,
-            _ if arg.starts_with('-') => {eprintln!("Неизвестный параметр: {arg}");help();return ExitCode::from(2)},
-            _=>if input.replace(arg).is_some() {eprintln!("Укажите только один файл или каталог");return ExitCode::from(2)},
-        }
-    }
-    let Some(path)=input else {help();return ExitCode::from(2)};
-    let files=match list_files(Path::new(&path)) {
-        Ok(files) if !files.is_empty()=>files,
-        Ok(_)=>{eprintln!("DOC/DOCX файлы не найдены");return ExitCode::from(2)},
-        Err(err)=>{eprintln!("{err}");return ExitCode::from(2)},
-    };
-    let total=files.len();
-    let mut matched=0;
-    let mut incomplete=0;
-    let mut errors=0;
-    for file in files {
-        let result=process_file(&file);
-        if json {println!("{}",to_json_line(&result));}
-        else {
-            match (&result.detection,&result.error) {
-                (Some(Detection::Found(r)),_)=>println!("[OK] {} | Поставщик ИНН={} КПП={}",file.display(),r.inn,r.kpp.as_deref().unwrap_or("не предусмотрен (ИП)")),
-                (Some(Detection::NotFound),_)=>println!("[НЕТ РЕКВИЗИТОВ] {}",file.display()),
-                (Some(Detection::Ambiguous),_)=>println!("[ПРОВЕРИТЬ ВРУЧНУЮ] {} | Неоднозначные или некорректные реквизиты",file.display()),
-                (_,Some(e))=>eprintln!("[ОШИБКА] {} | {}",file.display(),e),
-                _=>eprintln!("[ОШИБКА] {}",file.display()),
+            "--help" | "-h" => {
+                help();
+                return ExitCode::SUCCESS;
+            }
+
+            "--json" => {
+                json = true;
+            }
+
+            "--strict" => {
+                strict = true;
+            }
+
+            _ if arg.starts_with('-') => {
+                eprintln!("Неизвестный параметр: {arg}");
+                help();
+                return ExitCode::from(2);
+            }
+
+            _ => {
+                if input.replace(arg).is_some() {
+                    eprintln!("Укажите только один файл или каталог");
+                    return ExitCode::from(2);
+                }
             }
         }
+    }
+
+    let Some(path) = input else {
+        help();
+        return ExitCode::from(2);
+    };
+
+    // Поиск DOC и DOCX
+    let files = match list_files(Path::new(&path)) {
+        Ok(files) if !files.is_empty() => files,
+
+        Ok(_) => {
+            eprintln!("DOC/DOCX файлы не найдены");
+            return ExitCode::from(2);
+        }
+
+        Err(err) => {
+            eprintln!("{err}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let total = files.len();
+    let mut matched = 0;
+    let mut incomplete = 0;
+    let mut errors = 0;
+
+    // Обработка документов
+    for file in files {
+        let result = process_file(&file);
+
+        if json {
+            // Полный JSON со всеми реквизитами
+            println!("{}", to_json_line(&result));
+        } else {
+            // Результат распознавания
+            match (&result.detection, &result.error) {
+                (Some(Detection::Found(r)), _) => {
+                    println!(
+                        "\n[OK] {} | Поставщик ИНН={} КПП={}",
+                        file.display(),
+                        r.inn,
+                        r.kpp.as_deref().unwrap_or("не предусмотрен (ИП)")
+                    );
+                }
+
+                (Some(Detection::NotFound), _) => {
+                    println!(
+                        "\n[НЕТ РЕКВИЗИТОВ] {}",
+                        file.display()
+                    );
+                }
+
+                (Some(Detection::Ambiguous), _) => {
+                    println!(
+                        "\n[ПРОВЕРИТЬ ВРУЧНУЮ] {} | Неоднозначные или некорректные реквизиты",
+                        file.display()
+                    );
+                }
+
+                (_, Some(e)) => {
+                    eprintln!(
+                        "\n[ОШИБКА] {} | {}",
+                        file.display(),
+                        e
+                    );
+                }
+
+                _ => {
+                    eprintln!(
+                        "\n[ОШИБКА] {}",
+                        file.display()
+                    );
+                }
+            }
+
+            // Подробная информация о документе
+            if let Some(d) = &result.details {
+                println!("\n========== ДОКУМЕНТ ==========");
+
+                println!(
+                    "Номер документа: {}",
+                    display(d.document_number.as_deref())
+                );
+
+                println!(
+                    "Дата документа: {}",
+                    display(d.document_date.as_deref())
+                );
+
+                println!(
+                    "Это счёт: {}",
+                    if d.is_invoice { "Да" } else { "Нет" }
+                );
+
+                // Контрагент
+                println!("\n========== КОНТРАГЕНТ ==========");
+
+                println!(
+                    "Наименование: {}",
+                    display(d.counterparty_name.as_deref())
+                );
+
+                println!(
+                    "ИНН: {}",
+                    display(d.counterparty_inn.as_deref())
+                );
+
+                println!(
+                    "КПП: {}",
+                    display(d.counterparty_kpp.as_deref())
+                );
+
+                // Наша организация
+                println!("\n========== НАША ОРГАНИЗАЦИЯ ==========");
+
+                println!(
+                    "Наименование: {}",
+                    display(d.our_company_name.as_deref())
+                );
+
+                println!(
+                    "ИНН: {}",
+                    display(d.our_company_inn.as_deref())
+                );
+
+                println!(
+                    "КПП: {}",
+                    display(d.our_company_kpp.as_deref())
+                );
+
+                // Реквизиты выставителя и плательщика
+                let i = &d.invoice;
+
+                println!("\n========== ВЫСТАВИТЕЛЬ ==========");
+
+                println!(
+                    "ИНН выставителя: {}",
+                    display(i.issuer_inn.as_deref())
+                );
+
+                println!(
+                    "КПП выставителя: {}",
+                    display(i.issuer_kpp.as_deref())
+                );
+
+                println!(
+                    "Наименование выставителя: {}",
+                    display(i.issuer_company_name.as_deref())
+                );
+
+                println!(
+                    "Расчётный счёт выставителя: {}",
+                    display(i.issuer_bank_account.as_deref())
+                );
+
+                println!("\n========== ПЛАТЕЛЬЩИК ==========");
+
+                println!(
+                    "ИНН плательщика: {}",
+                    display(i.recipient_inn.as_deref())
+                );
+
+                println!(
+                    "Наименование плательщика: {}",
+                    display(i.recipient_company_name.as_deref())
+                );
+
+                println!("\n================================\n");
+            }
+        }
+
+        // Подсчёт результатов
         match result.detection {
-            Some(Detection::Found(_))=>matched+=1,
-            Some(_)=>incomplete+=1,
-            None=>errors+=1,
+            Some(Detection::Found(_)) => {
+                matched += 1;
+            }
+
+            Some(_) => {
+                incomplete += 1;
+            }
+
+            None => {
+                errors += 1;
+            }
         }
     }
-    if !json {println!("ИТОГО: файлов {total}, найдено {matched}, не подтверждено {incomplete}, ошибки чтения {errors}");}
-    if errors>0 || (strict && incomplete>0) {ExitCode::FAILURE} else {ExitCode::SUCCESS}
+
+    // Итоговая статистика
+    if !json {
+        println!(
+            "ИТОГО: файлов {total}, найдено {matched}, \
+             не подтверждено {incomplete}, ошибки чтения {errors}"
+        );
+    }
+
+    // Код завершения
+    if errors > 0 || (strict && incomplete > 0) {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 
